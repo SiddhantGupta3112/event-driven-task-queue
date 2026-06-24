@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: unless-stopped
+    ports: 
+      - '5432:5432'
+    env_file:
+      - .env
+    volumes:
+      - pg_volume:/var/lib/postgresql/data:rw
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - '6379:6379'
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  
+volumes:
+  pg_volume:
+  redis-data:
