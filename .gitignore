@@ -1,2 +1,8 @@
 .env
 event-driven-task-queue-env/
+
+tests/.env.test
+
+__pycache__/
+.pytest_cache/
+.benchmarks/

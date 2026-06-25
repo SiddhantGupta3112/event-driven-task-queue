@@ -6,26 +6,32 @@ from contextlib import contextmanager
 
 load_dotenv()
 
-USER = os.getenv("POSTGRES_USER")
-PASSWORD = os.getenv("POSTGRES_PASSWORD")
-DB = os.getenv("POSTGRES_DB")
+_db_pool = None
 
-is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
-db_host = "localhost" if is_local else "postgres"
+def get_pool():
+    """Helper function to lazily initialize the pool only when needed."""
+    global _db_pool
+    if _db_pool is None:
+        USER = os.getenv("POSTGRES_USER")
+        PASSWORD = os.getenv("POSTGRES_PASSWORD")
+        DB = os.getenv("POSTGRES_DB")
 
-DATABASE_URL = f"postgres://{USER}:{PASSWORD}@{db_host}:5432/{DB}"
+        is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
+        db_host = "localhost" if is_local else "postgres"
 
-
-db_pool = SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
+        DATABASE_URL = f"postgres://{USER}:{PASSWORD}@{db_host}:5432/{DB}"
+        _db_pool = SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
+    return _db_pool
 
 @contextmanager
 def get_db():
-    conn = db_pool.getconn()
+    pool = get_pool()
+    conn = pool.getconn()
     try:
         yield conn
     except Exception:
         conn.rollback()
         raise
     finally:
-        db_pool.putconn(conn)
+        pool.putconn(conn)
         
