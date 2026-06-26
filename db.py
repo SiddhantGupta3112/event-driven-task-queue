@@ -3,6 +3,7 @@ import psycopg2
 from dotenv import load_dotenv
 from psycopg2.pool import SimpleConnectionPool
 from contextlib import contextmanager
+import logging
 
 load_dotenv()
 
@@ -20,6 +21,7 @@ def get_pool():
         db_host = "localhost" if is_local else "postgres"
 
         DATABASE_URL = f"postgres://{USER}:{PASSWORD}@{db_host}:5432/{DB}"
+        logging.info(f"Database setup: Database URL is -{DATABASE_URL}")
         _db_pool = SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
     return _db_pool
 
