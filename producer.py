@@ -9,8 +9,12 @@ import uuid
 load_dotenv()
 
 is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
-logging.info(f"IS_LOCAL raw: {os.getenv('IS_LOCAL')}")
-logging.info(f"is_local: {is_local}")
+print("=" * 50, flush=True)
+print(f"IS_LOCAL raw = {os.getenv('IS_LOCAL')}", flush=True)
+print(f"is_local = {is_local}", flush=True)
+print(f"REDISHOST = {os.getenv('REDISHOST')}", flush=True)
+print(f"REDISPORT = {os.getenv('REDISPORT')}", flush=True)
+print("=" * 50, flush=True)
 
 if is_local:
     redis_host = "localhost"
@@ -30,6 +34,8 @@ pool = redis.ConnectionPool(
     password=redis_password,
     decode_responses=True
 )
+
+print(pool.connection_kwargs, flush=True)
 
 redis_client = redis.Redis(connection_pool=pool)
 
