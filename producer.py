@@ -10,23 +10,23 @@ load_dotenv()
 
 is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
 
-redis_host = "localhost" if is_local else os.getenv("REDIS_HOST", "redis")
-redis_db_env = os.getenv("REDIS_DB")
-redis_port_env = os.getenv("REDIS_PORT")
-
-if redis_db_env is None or redis_port_env is None:
-    raise ValueError("CRITICAL: REDIS_DB and REDIS_PORT environment variables must be set.")
-
-redis_db = int(redis_db_env)
-redis_port = int(redis_port_env)
+if is_local:
+    redis_host = "localhost"
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    redis_db = int(os.getenv("REDIS_DB", 0))
+    redis_password = None
+else:
+    redis_host = os.getenv("REDISHOST")
+    redis_port = int(os.getenv("REDISPORT", 6379))
+    redis_db = 0
+    redis_password = os.getenv("REDIS_PASSWORD")
 
 pool = redis.ConnectionPool(
     host=redis_host,
     port=redis_port,
     db=redis_db,
-    decode_responses=True,
-    ssl=not is_local,
-    ssl_cert_reqs=None if not is_local else None
+    password=redis_password,
+    decode_responses=True
 )
 
 redis_client = redis.Redis(connection_pool=pool)

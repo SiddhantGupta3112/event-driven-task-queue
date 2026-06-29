@@ -13,15 +13,17 @@ def get_pool():
     """Helper function to lazily initialize the pool only when needed."""
     global _db_pool
     if _db_pool is None:
-        USER = os.getenv("POSTGRES_USER")
-        PASSWORD = os.getenv("POSTGRES_PASSWORD")
-        DB = os.getenv("POSTGRES_DB")
-
         is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
-        db_host = "localhost" if is_local else os.getenv("POSTGRES_HOST", "postgres")
 
-        DATABASE_URL = f"postgres://{USER}:{PASSWORD}@{db_host}:5432/{DB}"
-        logging.info(f"Database setup: Database URL is -{DATABASE_URL}")
+        if is_local:
+            USER = os.getenv("POSTGRES_USER")
+            PASSWORD = os.getenv("POSTGRES_PASSWORD")
+            DB = os.getenv("POSTGRES_DB")
+            db_host = "localhost"
+            port = "5432"
+            DATABASE_URL = f"postgresql://{USER}:{PASSWORD}@{db_host}:{port}/{DB}"
+        else:
+            DATABASE_URL = os.getenv("DATABASE_URL")
         _db_pool = SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
     return _db_pool
 
