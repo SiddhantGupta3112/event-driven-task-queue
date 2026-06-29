@@ -3,5 +3,3 @@ python-dotenv==1.2.2
 pydantic-settings==2.14.1
 tabulate
 redis
-pytest
-pytest-benchmark

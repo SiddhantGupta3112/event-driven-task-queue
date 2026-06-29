@@ -18,7 +18,7 @@ def get_pool():
         DB = os.getenv("POSTGRES_DB")
 
         is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
-        db_host = "localhost" if is_local else "postgres"
+        db_host = "localhost" if is_local else os.getenv("POSTGRES_HOST", "postgres")
 
         DATABASE_URL = f"postgres://{USER}:{PASSWORD}@{db_host}:5432/{DB}"
         logging.info(f"Database setup: Database URL is -{DATABASE_URL}")

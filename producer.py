@@ -10,7 +10,7 @@ load_dotenv()
 
 is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
 
-redis_host = "localhost" if is_local else "redis"
+redis_host = "localhost" if is_local else os.getenv("REDIS_HOST", "redis")
 redis_db_env = os.getenv("REDIS_DB")
 redis_port_env = os.getenv("REDIS_PORT")
 
@@ -24,7 +24,9 @@ pool = redis.ConnectionPool(
     host=redis_host,
     port=redis_port,
     db=redis_db,
-    decode_responses=True
+    decode_responses=True,
+    ssl=not is_local,
+    ssl_cert_reqs=None if not is_local else None
 )
 
 redis_client = redis.Redis(connection_pool=pool)
