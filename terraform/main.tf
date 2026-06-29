@@ -9,27 +9,7 @@ terraform {
 
 provider "azurerm" {
   features {}
-}
-
-# Azure Container Registry
-resource "azurerm_container_registry" "acr" {
-  name                = "eventdriventaskqueue"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  sku                 = "Basic"
-  admin_enabled       = true
-}
-
-# Azure Cache for Redis
-resource "azurerm_redis_cache" "redis" {
-  name                = "event-driven-task-queue-redis"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  capacity            = var.redis_capacity
-  family              = var.redis_family
-  sku_name            = var.redis_sku
-  enable_non_ssl_port = false
-  minimum_tls_version = "1.2"
+  skip_provider_registration = true
 }
 
 # Postgres Flexible Server
@@ -74,44 +54,36 @@ resource "azurerm_container_group" "monitor" {
   os_type             = "Linux"
   restart_policy      = "Always"
 
-  image_registry_credential {
-    server   = azurerm_container_registry.acr.login_server
-    username = azurerm_container_registry.acr.admin_username
-    password = azurerm_container_registry.acr.admin_password
+  container {
+    name   = "redis"
+    image  = "redis:7-alpine"
+    cpu    = "0.5"
+    memory = "0.5"
+
+    ports {
+      port     = 6379
+      protocol = "TCP"
+    }
   }
 
   container {
     name   = "monitor"
     image  = var.container_image
     cpu    = "1"
-    memory = "2"
+    memory = "1.5"
 
     environment_variables = {
-      IS_LOCAL       = "false"
-      REDIS_HOST     = azurerm_redis_cache.redis.hostname
-      REDIS_PORT     = "6380"
-      REDIS_DB       = "0"
-      POSTGRES_USER  = var.postgres_admin_user
-      POSTGRES_DB    = "job_queue"
-      POSTGRES_HOST  = azurerm_postgresql_flexible_server.postgres.fqdn
+      IS_LOCAL      = "false"
+      REDIS_HOST    = "localhost"
+      REDIS_PORT    = "6379"
+      REDIS_DB      = "0"
+      POSTGRES_USER = var.postgres_admin_user
+      POSTGRES_DB   = "job_queue"
+      POSTGRES_HOST = azurerm_postgresql_flexible_server.postgres.fqdn
     }
 
     secure_environment_variables = {
-      REDIS_PASSWORD    = azurerm_redis_cache.redis.primary_access_key
       POSTGRES_PASSWORD = var.postgres_admin_password
     }
   }
-}
-
-# Variables
-variable "resource_group_name" {
-  default = "event-driven-task-queue-rg"
-}
-
-variable "location" {
-  default = "eastus"
-}
-
-variable "postgres_admin_password" {
-  sensitive = true
 }
