@@ -14,6 +14,8 @@ def get_pool():
     global _db_pool
     if _db_pool is None:
         is_local = os.getenv("IS_LOCAL", "true").lower() == "true"
+        logging.info(f"IS_LOCAL raw: {os.getenv('IS_LOCAL')}")
+        logging.info(f"is_local: {is_local}")
 
         if is_local:
             USER = os.getenv("POSTGRES_USER")
