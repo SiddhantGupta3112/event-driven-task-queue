@@ -9,10 +9,26 @@ Designed to be called as a worker function from a Redis-streams task queue.
 The top-level entry point is `generate_stock_report(ticker, email)`, which is
 a pure function: it does not open any database connections. The caller
 (a separate worker module) is responsible for persisting results.
+
+CHANGELOG (this revision):
+- Added `build_report_data()`, which assembles every indicator the feature
+  pipeline already computes (RSI, MACD family, Bollinger Bands, Volume
+  Change, ROC, OBV, Stochastic %K/%D, 3/5/10-day returns, trend slope,
+  lagged close/volume) plus a recent time-series slice, into one
+  JSON-serializable dict. This is the data that was previously computed in
+  feature_generation() but never surfaced in the PDF or the API response.
+- `generate_pdf_report()` now renders that full indicator set (an expanded,
+  sectioned summary table, plus two additional charts: Bollinger Bands and
+  Stochastic Oscillator, alongside the existing price/RSI/MACD charts).
+- `generate_stock_report()` now writes a sidecar `<ticker>_report_<date>.json`
+  file next to the PDF containing the full `build_report_data()` payload, and
+  returns that data inline in its result dict under the "data" key, so the
+  FastAPI layer can serve it without recomputing anything.
 """
 
 import os
 import io
+import json
 from datetime import date, timedelta, datetime
 
 import yfinance as yf
@@ -147,6 +163,12 @@ def feature_generation(df):
     df['BB_std'] = df['Close'].rolling(window=20).std()
     df['BB_upper'] = df['BB_middle'] + 2 * df['BB_std']
     df['BB_lower'] = df['BB_middle'] - 2 * df['BB_std']
+    # %B and bandwidth are cheap derived reads on the Bollinger Bands that
+    # are useful on their own (where price sits within the bands, and how
+    # wide the bands currently are) - computed here so they ride along with
+    # the rest of the feature set instead of being recomputed downstream.
+    df['BB_percent_b'] = (df['Close'] - df['BB_lower']) / (df['BB_upper'] - df['BB_lower'])
+    df['BB_bandwidth'] = (df['BB_upper'] - df['BB_lower']) / df['BB_middle']
 
     # Volume Difference
     df['Volume_Change'] = df['Volume'].diff()
@@ -232,6 +254,50 @@ _MODEL_FEATURES = [
     'Trend_Slope', 'Lagged_Close', 'Lagged_Volume',
 ]
 
+# Every indicator column that should be surfaced in the PDF / API, grouped
+# by section. This drives both `build_report_data()` and the PDF summary
+# table, so adding a new computed feature in one place (feature_generation)
+# and registering it here is enough to get it into both outputs.
+_INDICATOR_SECTIONS = [
+    ("Price & Trend", [
+        ("Close", "Close", "{:.2f}"),
+        ("50-Day SMA", "50DSMA", "{:.2f}"),
+        ("200-Day SMA", "200DSMA", "{:.2f}"),
+        ("8-Day EMA", "8DEMA", "{:.2f}"),
+        ("Trend Slope (5d)", "Trend_Slope", "{:.4f}"),
+        ("Lagged Close (prev day)", "Lagged_Close", "{:.2f}"),
+    ]),
+    ("Momentum", [
+        ("RSI (14)", "RSI_14", "{:.2f}"),
+        ("Stochastic %K", "%K", "{:.2f}"),
+        ("Stochastic %D", "%D", "{:.2f}"),
+        ("Rate of Change (10d)", "ROC", "{:.2%}"),
+    ]),
+    ("MACD", [
+        ("MACD", "MACD", "{:.4f}"),
+        ("MACD Signal", "Signal", "{:.4f}"),
+        ("MACD Histogram", "MACD_Hist", "{:.4f}"),
+    ]),
+    ("Bollinger Bands", [
+        ("Upper Band", "BB_upper", "{:.2f}"),
+        ("Middle Band", "BB_middle", "{:.2f}"),
+        ("Lower Band", "BB_lower", "{:.2f}"),
+        ("%B (position in bands)", "BB_percent_b", "{:.2%}"),
+        ("Bandwidth", "BB_bandwidth", "{:.2%}"),
+    ]),
+    ("Volume", [
+        ("Volume", "Volume", "{:,.0f}"),
+        ("Volume Change (1d)", "Volume_Change", "{:,.0f}"),
+        ("Lagged Volume (prev day)", "Lagged_Volume", "{:,.0f}"),
+        ("On-Balance Volume", "OBV", "{:,.0f}"),
+    ]),
+    ("Returns", [
+        ("3-Day Return", "Return_3D", "{:.2%}"),
+        ("5-Day Return", "Return_5D", "{:.2%}"),
+        ("10-Day Return", "Return_10D", "{:.2%}"),
+    ]),
+]
+
 
 def train_and_predict(df):
     """
@@ -295,6 +361,102 @@ def train_and_predict(df):
         "predicted_direction": predicted_direction,
         "confidence": confidence,
         "feature_values": feature_values,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Structured data payload (new) — this is the single source of truth for
+# "all the data we calculate", consumed by both the PDF and the API.
+# ---------------------------------------------------------------------------
+
+def _json_safe(value):
+    """Coerce a pandas/numpy scalar into a plain JSON-serializable value."""
+    if pd.isna(value):
+        return None
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def build_report_data(ticker, df, prediction_result, history_days=252):
+    """
+    Assemble every indicator computed by feature_generation() into one
+    JSON-serializable dict: the latest value of each indicator (grouped into
+    the sections defined in _INDICATOR_SECTIONS), plus a recent time-series
+    slice suitable for charting on a frontend, plus the model's prediction.
+
+    This is the single payload shared by generate_pdf_report() (for the
+    summary table) and the API layer (served verbatim to the frontend), so
+    nothing computed in feature_generation() is silently dropped.
+
+    Inputs:
+        ticker (str): ticker symbol.
+        df (pd.DataFrame): feature-engineered dataframe (output of
+            feature_generation).
+        prediction_result (dict): output of train_and_predict.
+        history_days (int): how many trailing rows to include in the
+            "history" time series (default 252, ~1 trading year).
+
+    Returns:
+        dict: {
+            "ticker": str,
+            "generated_at": ISO timestamp string,
+            "prediction": {"direction": str, "confidence": float},
+            "latest_date": ISO date string,
+            "indicators": {section_title: {label: value, ...}, ...},
+            "indicators_flat": {column_name: value, ...},
+            "history": [{"date": ..., "Open":..., "High":..., "Low":...,
+                          "Close":..., "Volume":..., plus every indicator
+                          column}, ...],
+        }
+    """
+    latest = df.iloc[-1]
+
+    indicators = {}
+    indicators_flat = {}
+    for section_title, fields in _INDICATOR_SECTIONS:
+        section = {}
+        for label, column, _fmt in fields:
+            raw_value = latest[column]
+            value = _json_safe(raw_value)
+            section[label] = value
+            indicators_flat[column] = value
+        indicators[section_title] = section
+
+    history_df = df.tail(history_days).reset_index()
+    date_col = history_df.columns[0]
+    history_cols = [
+        date_col, "Open", "High", "Low", "Close", "Volume",
+        "50DSMA", "200DSMA", "8DEMA", "MACD", "Signal", "MACD_Hist",
+        "RSI_14", "BB_upper", "BB_middle", "BB_lower", "BB_percent_b",
+        "BB_bandwidth", "Volume_Change", "ROC", "OBV", "%K", "%D",
+        "Return_3D", "Return_5D", "Return_10D", "Trend_Slope",
+    ]
+    history = []
+    for _, row in history_df.iterrows():
+        record = {}
+        for col in history_cols:
+            key = "date" if col == date_col else col
+            record[key] = _json_safe(row[col])
+        history.append(record)
+
+    return {
+        "ticker": ticker,
+        "generated_at": datetime.now().isoformat(),
+        "prediction": {
+            "direction": prediction_result["predicted_direction"],
+            "confidence": prediction_result["confidence"],
+        },
+        "latest_date": _json_safe(df.index[-1]),
+        "indicators": indicators,
+        "indicators_flat": indicators_flat,
+        "history": history,
     }
 
 
@@ -390,7 +552,111 @@ def _make_macd_hist_chart(df):
     return buf
 
 
-def generate_pdf_report(ticker, df, prediction_result, output_path):
+def _make_bollinger_chart(df):
+    """
+    Create a static matplotlib chart of Close price against the Bollinger
+    Bands (upper/middle/lower), returned as an in-memory PNG buffer.
+
+    Inputs:
+        df (pd.DataFrame): feature-engineered dataframe with Close, BB_upper,
+            BB_middle, BB_lower columns.
+
+    Returns:
+        io.BytesIO: PNG image buffer, seeked to position 0.
+    """
+    recent = df.tail(252)
+    fig, ax = plt.subplots(figsize=(7, 2.9))
+    ax.plot(recent.index, recent['Close'], label='Close', color='black', linewidth=1.1)
+    ax.plot(recent.index, recent['BB_upper'], label='Upper Band', color='brown', linestyle='--', linewidth=1)
+    ax.plot(recent.index, recent['BB_middle'], label='Middle Band', color='gray', linewidth=1)
+    ax.plot(recent.index, recent['BB_lower'], label='Lower Band', color='brown', linestyle='--', linewidth=1)
+    ax.fill_between(recent.index, recent['BB_lower'], recent['BB_upper'], color='brown', alpha=0.07)
+    ax.set_title("Bollinger Bands (20, 2σ)")
+    ax.legend(fontsize=7, loc='upper left')
+    ax.tick_params(axis='x', labelrotation=45, labelsize=7)
+    ax.tick_params(axis='y', labelsize=7)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def _make_stochastic_chart(df):
+    """
+    Create a static matplotlib chart of the Stochastic Oscillator (%K, %D)
+    with overbought (80) / oversold (20) reference lines, returned as an
+    in-memory PNG buffer.
+
+    Inputs:
+        df (pd.DataFrame): feature-engineered dataframe with %K, %D columns.
+
+    Returns:
+        io.BytesIO: PNG image buffer, seeked to position 0.
+    """
+    recent = df.tail(252)
+    fig, ax = plt.subplots(figsize=(7, 2.8))
+    ax.plot(recent.index, recent['%K'], label='%K', color='steelblue', linewidth=1)
+    ax.plot(recent.index, recent['%D'], label='%D', color='darkorange', linewidth=1)
+    ax.axhline(80, color='red', linestyle='--', linewidth=1)
+    ax.axhline(20, color='green', linestyle='--', linewidth=1)
+    ax.set_ylim(0, 100)
+    ax.set_title("Stochastic Oscillator (%K / %D)")
+    ax.legend(fontsize=7, loc='upper left')
+    ax.tick_params(axis='x', labelrotation=45, labelsize=7)
+    ax.tick_params(axis='y', labelsize=7)
+    fig.tight_layout()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def _build_summary_table_rows(report_data):
+    """
+    Flatten the sectioned indicator data from `build_report_data()` into
+    reportlab Table rows, with a section-header row before each group.
+
+    Inputs:
+        report_data (dict): output of build_report_data().
+
+    Returns:
+        tuple(list[list[str]], list[int]): (rows, header_row_indices) where
+            header_row_indices are the row indices that are section headers
+            (used to style them distinctly from the BACKGROUND/TEXTCOLOR of
+            data rows).
+    """
+    rows = [["Indicator", "Latest Value"]]
+    header_row_indices = [0]
+
+    fmt_lookup = {
+        column: fmt
+        for _section_title, fields in _INDICATOR_SECTIONS
+        for _label, column, fmt in fields
+    }
+
+    for section_title, fields in _INDICATOR_SECTIONS:
+        header_row_indices.append(len(rows))
+        rows.append([section_title, ""])
+        for label, column, fmt in fields:
+            value = report_data["indicators"][section_title][label]
+            if value is None:
+                display = "N/A"
+            else:
+                try:
+                    display = fmt.format(value)
+                except (ValueError, TypeError):
+                    display = str(value)
+            rows.append([label, display])
+
+    return rows, header_row_indices
+
+
+def generate_pdf_report(ticker, df, prediction_result, output_path, report_data=None):
     """
     Generate a PDF report summarizing technical indicators and the model's
     predicted direction for a ticker, using reportlab.
@@ -402,10 +668,16 @@ def generate_pdf_report(ticker, df, prediction_result, output_path):
         prediction_result (dict): output of train_and_predict, containing
             predicted_direction, confidence, and feature_values.
         output_path (str): filesystem path to write the PDF to.
+        report_data (dict or None): output of build_report_data(). If not
+            provided, it is computed here from df/prediction_result so this
+            function still works standalone.
 
     Returns:
         str: the output_path the PDF was saved to.
     """
+    if report_data is None:
+        report_data = build_report_data(ticker, df, prediction_result)
+
     styles = getSampleStyleSheet()
     disclaimer_style = ParagraphStyle(
         "Disclaimer", parent=styles["Normal"], fontSize=8,
@@ -432,33 +704,21 @@ def generate_pdf_report(ticker, df, prediction_result, output_path):
     ))
     story.append(Spacer(1, 0.15 * inch))
 
-    latest = df.iloc[-1]
-    summary_rows = [
-        ["Indicator", "Latest Value"],
-        ["Close", f"{latest['Close']:.2f}"],
-        ["50DSMA", f"{latest['50DSMA']:.2f}"],
-        ["200DSMA", f"{latest['200DSMA']:.2f}"],
-        ["8DEMA", f"{latest['8DEMA']:.2f}"],
-        ["RSI (14)", f"{latest['RSI_14']:.2f}"],
-        ["MACD", f"{latest['MACD']:.4f}"],
-        ["MACD Signal", f"{latest['Signal']:.4f}"],
-        ["MACD Histogram", f"{latest['MACD_Hist']:.4f}"],
-        ["Bollinger Upper", f"{latest['BB_upper']:.2f}"],
-        ["Bollinger Middle", f"{latest['BB_middle']:.2f}"],
-        ["Bollinger Lower", f"{latest['BB_lower']:.2f}"],
-        ["Stochastic %K", f"{latest['%K']:.2f}"],
-        ["Stochastic %D", f"{latest['%D']:.2f}"],
-        ["OBV", f"{latest['OBV']:.0f}"],
-    ]
-    table = Table(summary_rows, colWidths=[2.5 * inch, 2.5 * inch])
-    table.setStyle(TableStyle([
+    summary_rows, header_row_indices = _build_summary_table_rows(report_data)
+    table = Table(summary_rows, colWidths=[3.0 * inch, 2.2 * inch])
+    table_style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c3e50")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f5f5f5")]),
-    ]))
+    ]
+    for idx in header_row_indices[1:]:  # skip the column-header row already styled above
+        table_style.append(("SPAN", (0, idx), (-1, idx)))
+        table_style.append(("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#dfe6ec")))
+        table_style.append(("FONTNAME", (0, idx), (-1, idx), "Helvetica-Bold"))
+    table.setStyle(TableStyle(table_style))
     story.append(table)
     story.append(Spacer(1, 0.25 * inch))
 
@@ -467,9 +727,19 @@ def generate_pdf_report(ticker, df, prediction_result, output_path):
     story.append(RLImage(price_chart, width=6.5 * inch, height=2.97 * inch))
     story.append(Spacer(1, 0.15 * inch))
 
+    story.append(Paragraph("Bollinger Bands", styles["Heading3"]))
+    bollinger_chart = _make_bollinger_chart(df)
+    story.append(RLImage(bollinger_chart, width=6.5 * inch, height=2.69 * inch))
+    story.append(Spacer(1, 0.15 * inch))
+
     story.append(Paragraph("RSI (14)", styles["Heading3"]))
     rsi_chart = _make_rsi_chart(df)
     story.append(RLImage(rsi_chart, width=6.5 * inch, height=2.6 * inch))
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph("Stochastic Oscillator", styles["Heading3"]))
+    stoch_chart = _make_stochastic_chart(df)
+    story.append(RLImage(stoch_chart, width=6.5 * inch, height=2.6 * inch))
     story.append(Spacer(1, 0.15 * inch))
 
     story.append(Paragraph("MACD Histogram", styles["Heading3"]))
@@ -536,6 +806,8 @@ def send_report_email(to_email, ticker, pdf_path):
     )
     response.raise_for_status()
     return True
+
+
 # ---------------------------------------------------------------------------
 # Orchestration (worker entry point)
 # ---------------------------------------------------------------------------
@@ -543,8 +815,8 @@ def send_report_email(to_email, ticker, pdf_path):
 def generate_stock_report(ticker: str, email: str) -> dict:
     """
     Top-level orchestrating function for the worker pipeline: fetch ->
-    feature_generation -> train_and_predict -> generate_pdf_report ->
-    send_report_email.
+    feature_generation -> train_and_predict -> build_report_data ->
+    generate_pdf_report -> send_report_email.
 
     This is a pure function: it performs no database I/O. The caller (a
     separate worker module reading from the Redis-streams task queue) is
@@ -566,6 +838,8 @@ def generate_stock_report(ticker: str, email: str) -> dict:
             "predicted_direction": "up"/"down" or None,
             "confidence": float or None,
             "pdf_path": str or None,
+            "data_path": str or None,
+            "data": dict or None, the full build_report_data() payload,
             "error": None or str,
         }
     """
@@ -575,6 +849,8 @@ def generate_stock_report(ticker: str, email: str) -> dict:
         "predicted_direction": None,
         "confidence": None,
         "pdf_path": None,
+        "data_path": None,
+        "data": None,
         "error": None,
     }
 
@@ -584,13 +860,21 @@ def generate_stock_report(ticker: str, email: str) -> dict:
         raw_data = fetch_stock_data(ticker)
         df = feature_generation(raw_data)
         prediction_result = train_and_predict(df)
+        report_data = build_report_data(ticker, df, prediction_result)
 
-        final_path = os.path.join("/tmp", f"{ticker}_report_{date.today().isoformat()}.pdf")
+        today_str = date.today().isoformat()
+        final_path = os.path.join("/tmp", f"{ticker}_report_{today_str}.pdf")
         fd, tmp_path = tempfile.mkstemp(suffix=".pdf", dir="/tmp")
         os.close(fd)
-        generate_pdf_report(ticker, df, prediction_result, tmp_path)
+        generate_pdf_report(ticker, df, prediction_result, tmp_path, report_data=report_data)
         os.replace(tmp_path, final_path)
         pdf_path = final_path
+
+        data_path = os.path.join("/tmp", f"{ticker}_report_{today_str}.json")
+        tmp_data_path = data_path + ".tmp"
+        with open(tmp_data_path, "w") as f:
+            json.dump(report_data, f)
+        os.replace(tmp_data_path, data_path)
 
         send_report_email(email, ticker, pdf_path)
 
@@ -598,6 +882,8 @@ def generate_stock_report(ticker: str, email: str) -> dict:
         result["predicted_direction"] = prediction_result["predicted_direction"]
         result["confidence"] = prediction_result["confidence"]
         result["pdf_path"] = pdf_path
+        result["data_path"] = data_path
+        result["data"] = report_data
 
     except Exception as exc:
         result["status"] = "failed"

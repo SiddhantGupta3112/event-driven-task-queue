@@ -1,85 +1,128 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Stock Report Portal</title>
-  <style>
-    body {
-      font-family: Arial;
-      max-width: 600px;
-      margin: 40px auto;
-    }
-    input, button {
-      padding: 10px;
-      margin: 5px 0;
-      width: 100%;
-    }
-    .box {
-      border: 1px solid #ddd;
-      padding: 15px;
-      margin-top: 20px;
-    }
-    pre {
-      background: #f4f4f4;
-      padding: 10px;
-    }
-  </style>
+<meta charset="UTF-8">
+<title>Stock Report Dashboard</title>
+<style>
+body{font-family:Arial,sans-serif;max-width:1200px;margin:20px auto;background:#f5f5f5}
+.card{background:#fff;padding:15px;margin:12px 0;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+input,button{padding:10px;margin:4px;width:100%;box-sizing:border-box}
+table{width:100%;border-collapse:collapse}
+td,th{border:1px solid #ddd;padding:6px}
+pre{white-space:pre-wrap;background:#eee;padding:10px;overflow:auto}
+.status{font-weight:bold}
+</style>
 </head>
-
 <body>
+<h2>Stock Report Dashboard</h2>
 
-<h2>📊 Stock Report Portal</h2>
-
-<div class="box">
-  <h3>Create Report</h3>
-
-  <input id="ticker" placeholder="Ticker (e.g. AAPL)" />
-  <input id="email" placeholder="Email" />
-
-  <button onclick="createReport()">Generate Report</button>
+<div class="card">
+<input id="ticker" placeholder="Ticker">
+<input id="email" placeholder="Email">
+<button onclick="createReport()">Generate Report</button>
+<div class="status" id="status">Idle</div>
 </div>
 
-<div class="box">
-  <h3>Check Status</h3>
-
-  <input id="streamId" placeholder="Stream ID" />
-  <button onclick="checkStatus()">Check</button>
+<div class="grid">
+<div class="card"><h3>Prediction</h3><div id="prediction"></div></div>
+<div class="card"><h3>Market</h3><div id="market"></div></div>
+<div class="card"><h3>Trend</h3><div id="trend"></div></div>
+<div class="card"><h3>Momentum</h3><div id="momentum"></div></div>
+<div class="card"><h3>Volume</h3><div id="volume"></div></div>
+<div class="card"><h3>Volatility</h3><div id="volatility"></div></div>
 </div>
 
-<div class="box">
-  <h3>Output</h3>
-  <pre id="output">Waiting...</pre>
+<div class="card">
+<h3>Signals</h3>
+<div id="signals"></div>
+</div>
+
+<div class="card">
+<h3>Feature Values</h3>
+<div id="features"></div>
+</div>
+
+<div class="card">
+<details open>
+<summary><b>Raw JSON</b></summary>
+<pre id="raw">Waiting...</pre>
+</details>
 </div>
 
 <script>
-const BASE_URL = "https://event-driven-task-queue-production.up.railway.app";
+const BASE_URL="https://event-driven-task-queue-production.up.railway.app";
+let poller=null;
 
-async function createReport() {
-  const ticker = document.getElementById("ticker").value;
-  const email = document.getElementById("email").value;
-
-  const res = await fetch(`${BASE_URL}/reports`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ticker, email })
-  });
-
-  const data = await res.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
-
-  if (data.stream_id) {
-    document.getElementById("streamId").value = data.stream_id;
-  }
+function objTable(obj){
+ if(!obj) return "<i>No data</i>";
+ let h="<table>";
+ for(const [k,v] of Object.entries(obj)){
+   h+=`<tr><td>${k}</td><td>${typeof v==="object"?JSON.stringify(v):v}</td></tr>`;
+ }
+ h+="</table>";
+ return h;
 }
 
-async function checkStatus() {
-  const streamId = document.getElementById("streamId").value;
+async function createReport(){
+ clearInterval(poller);
+ document.getElementById("status").textContent="Submitting...";
+ const ticker=document.getElementById("ticker").value.trim();
+ const email=document.getElementById("email").value.trim();
 
-  const res = await fetch(`${BASE_URL}/reports/${streamId}`);
-  const data = await res.json();
+ const res=await fetch(`${BASE_URL}/reports`,{
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({ticker,email})
+ });
+ const data=await res.json();
+ document.getElementById("raw").textContent=JSON.stringify(data,null,2);
 
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+ if(data.cached && data.data){
+    render(data.data);
+    document.getElementById("status").textContent="Completed (cached)";
+    return;
+ }
+
+ if(data.stream_id){
+    document.getElementById("status").textContent="Queued";
+    poller=setInterval(()=>pollStatus(data.stream_id),2000);
+ }
+}
+
+async function pollStatus(id){
+ const res=await fetch(`${BASE_URL}/reports/${id}`);
+ const s=await res.json();
+ document.getElementById("raw").textContent=JSON.stringify(s,null,2);
+ document.getElementById("status").textContent=s.status;
+
+ if(s.status==="completed"){
+    clearInterval(poller);
+    const url=BASE_URL+s.data_url;
+    const r=await fetch(url);
+    const d=await r.json();
+    document.getElementById("raw").textContent=JSON.stringify(d,null,2);
+    render(d);
+ }
+ if(s.status==="failed"||s.status==="not_found") clearInterval(poller);
+}
+
+function render(d){
+ document.getElementById("prediction").innerHTML=objTable(d.prediction);
+ document.getElementById("market").innerHTML=objTable(d.market);
+ document.getElementById("trend").innerHTML=objTable(d.trend);
+ document.getElementById("momentum").innerHTML=objTable(d.momentum);
+ document.getElementById("volume").innerHTML=objTable(d.volume);
+ document.getElementById("volatility").innerHTML=objTable(d.volatility);
+
+ if(Array.isArray(d.signals)){
+   document.getElementById("signals").innerHTML="<ul>"+d.signals.map(x=>`<li><b>${x.title??""}</b> ${x.status??""} ${x.description??""}</li>`).join("")+"</ul>";
+ }else{
+   document.getElementById("signals").innerHTML=objTable(d.signals);
+ }
+
+ document.getElementById("features").innerHTML=objTable(d.feature_values||d.features);
 }
 </script>
-
 </body>
 </html>
