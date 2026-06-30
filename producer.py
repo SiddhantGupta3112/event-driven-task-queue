@@ -17,7 +17,7 @@ print(f"REDISPORT = {os.getenv('REDISPORT')}", flush=True)
 print("=" * 50, flush=True)
 
 if is_local:
-    redis_host = "localhost"
+    redis_host = os.getenv("REDIS_HOST", "localhost")
     redis_port = int(os.getenv("REDIS_PORT", 6379))
     redis_db = int(os.getenv("REDIS_DB", 0))
     redis_password = None

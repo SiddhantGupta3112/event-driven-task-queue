@@ -10,5 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all source files
 COPY . .
 
-# Default command
-CMD ["python", "monitor.py"]
+COPY start.sh .
+RUN chmod +x start.sh
+CMD ["./start.sh"]
+

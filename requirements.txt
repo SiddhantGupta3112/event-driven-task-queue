@@ -3,3 +3,15 @@ python-dotenv==1.2.2
 pydantic-settings==2.14.1
 tabulate
 redis
+yfinance
+pandas
+numpy
+scipy
+matplotlib
+scikit-learn
+reportlab
+plotly
+fastapi
+uvicorn
+requests
+email-validator

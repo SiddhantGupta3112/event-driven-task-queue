@@ -5,6 +5,10 @@ from producer import redis_client, enqueue_job
 from worker import consume_jobs, worker_group_exists
 from reaper import cleanup_jobs
 import uuid
+import glob
+from datetime import date
+import os
+
 
 STREAM_NAME = "jobs"
 GROUP_NAME = "workers"
@@ -15,6 +19,16 @@ ADJUST_INTERVAL = 5
 
 active_worker_processes = []
 active_reaper_processes = []
+
+def cleanup_old_reports():
+    today_suffix = date.today().isoformat()
+    for filepath in glob.glob("/tmp/*_report_*.pdf"):
+        if today_suffix not in filepath:
+            try:
+                os.remove(filepath)
+                logging.info(f"Cleaned up stale report: {filepath}")
+            except Exception as e:
+                logging.error(f"Failed to remove {filepath}: {e}")
 
 def get_stream_lag():
     try:
@@ -104,13 +118,14 @@ if __name__ == "__main__":
     worker_group_exists()
 
     # Step 1: enqueue 20 jobs
-    enqueue_demo_jobs(20)
+    #enqueue_demo_jobs(20)
 
     # Step 2: start monitor loop
     try:
         while True:
             adjust_workers()
             adjust_reapers()
+            cleanup_old_reports()
             time.sleep(ADJUST_INTERVAL)
     except KeyboardInterrupt:
         logging.info("Controller shutting down...")

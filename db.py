@@ -21,7 +21,7 @@ def get_pool():
             USER = os.getenv("POSTGRES_USER")
             PASSWORD = os.getenv("POSTGRES_PASSWORD")
             DB = os.getenv("POSTGRES_DB")
-            db_host = "localhost"
+            db_host = os.getenv("POSTGRES_HOST", "localhost")
             port = "5432"
             DATABASE_URL = f"postgresql://{USER}:{PASSWORD}@{db_host}:{port}/{DB}"
         else:

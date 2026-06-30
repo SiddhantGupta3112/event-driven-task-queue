@@ -1,11 +1,10 @@
-import redis
 import logging
 from producer import redis_client
 from db import get_db
 import random
 import time
 from typing import cast
-import argparse
+from stock import generate_stock_report
 
 def worker_group_exists():
     logging.info("Worker setup: Checking if consumer group exists...")
@@ -62,7 +61,7 @@ def consume_jobs(
         
             continue
         
-        stream, entries = messages[0]
+        stream, entries = cast(list, messages)[0]
         stream_id, payload = entries[0]
         polls = 0
         iterations += 1
@@ -104,9 +103,17 @@ def consume_jobs(
             )
             continue
         
-        time.sleep(random.uniform(0.5, 2))
-
-        status = random.choice(["failed", "completed"])
+        if payload.get("task_type") == "stock_report":
+            result = generate_stock_report(
+                ticker=payload["ticker"],
+                email=payload["email"]
+                )
+            status = result["status"]
+            error_msg = result.get("error")
+        else:
+            time.sleep(random.uniform(0.5, 2))
+            status = random.choice(["failed", "completed"])
+            error_msg = "Job failed due to simulated error" if status == "failed" else None
 
         try:
             with get_db() as conn:
@@ -116,8 +123,6 @@ def consume_jobs(
                         f"{worker_id}: Updating final status to '{status}' "
                         f"for job {stream_id}"
                     )
-
-                    error_msg = "Job failed due to simulated error" if status == "failed" else None
 
                     cur.execute(
                         """
