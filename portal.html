@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Stock Report Portal</title>
+  <style>
+    body {
+      font-family: Arial;
+      max-width: 600px;
+      margin: 40px auto;
+    }
+    input, button {
+      padding: 10px;
+      margin: 5px 0;
+      width: 100%;
+    }
+    .box {
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin-top: 20px;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h2>📊 Stock Report Portal</h2>
+
+<div class="box">
+  <h3>Create Report</h3>
+
+  <input id="ticker" placeholder="Ticker (e.g. AAPL)" />
+  <input id="email" placeholder="Email" />
+
+  <button onclick="createReport()">Generate Report</button>
+</div>
+
+<div class="box">
+  <h3>Check Status</h3>
+
+  <input id="streamId" placeholder="Stream ID" />
+  <button onclick="checkStatus()">Check</button>
+</div>
+
+<div class="box">
+  <h3>Output</h3>
+  <pre id="output">Waiting...</pre>
+</div>
+
+<script>
+const BASE_URL = "https://event-driven-task-queue-production.up.railway.app";
+
+async function createReport() {
+  const ticker = document.getElementById("ticker").value;
+  const email = document.getElementById("email").value;
+
+  const res = await fetch(`${BASE_URL}/reports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticker, email })
+  });
+
+  const data = await res.json();
+  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+
+  if (data.stream_id) {
+    document.getElementById("streamId").value = data.stream_id;
+  }
+}
+
+async function checkStatus() {
+  const streamId = document.getElementById("streamId").value;
+
+  const res = await fetch(`${BASE_URL}/reports/${streamId}`);
+  const data = await res.json();
+
+  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+}
+</script>
+
+</body>
+</html>

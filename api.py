@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 import os
 from datetime import date
@@ -8,6 +9,14 @@ from db import get_db
 from stock import send_report_email
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for now (dev + testing)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 REPORTS_DIR = "/tmp"
 
 class ReportRequest(BaseModel):

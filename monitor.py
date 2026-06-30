@@ -8,7 +8,7 @@ import uuid
 import glob
 from datetime import date
 import os
-
+import sys
 
 STREAM_NAME = "jobs"
 GROUP_NAME = "workers"
@@ -112,7 +112,7 @@ def enqueue_demo_jobs(n=20):
             logging.error(f"Failed to enqueue job {i}: {e}")           
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
     logging.info("Controller starting...")
     
     worker_group_exists()
