@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Prediction Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+:root {
+  --bg-main: #0b0f19;
+  --bg-card: #131a26;
+  --bg-input: #1f293d;
+  --border-color: #243249;
+  --text-main: #f3f4f6;
+  --text-muted: #9ca3af;
+  --accent-blue: #2563eb;
+  --accent-green: #10b981;
+  --accent-red: #ef4444;
+  --accent-yellow: #f59e0b;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  margin: 0;
+  padding: 20px;
+}
+
+.container {
+  max-width: 1300px;
+  margin: 0 auto;
+}
+
+h2, h3, h4 { margin: 0 0 10px 0; font-weight: 600; }
+h2 { font-size: 24px; text-align: center; margin-bottom: 2px; }
+.subtitle { text-align: center; color: var(--text-muted); font-size: 14px; margin-bottom: 20px; }
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+/* Control Panel */
+.controls-grid {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 12px;
+  border-radius: 8px;
+  flex: 1;
+  font-size: 14px;
+}
+input::placeholder { color: var(--text-muted); }
+button {
+  background: var(--accent-blue);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+button:hover { background: #1d4ed8; }
+.status { font-weight: bold; font-size: 14px; color: var(--text-muted); min-width: 120px; text-align: right; }
+
+/* Meta Info Grid */
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+.meta-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 12px; }
+.meta-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
+.meta-val { font-size: 16px; font-weight: bold; }
+
+/* Main Split View: Prediction & Chart */
+.main-split {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* Prediction Card Styles */
+.pred-direction { font-size: 32px; font-weight: 800; display: flex; align-items: center; justify-content: center; gap: 8px; margin: 15px 0; }
+.direction-up { color: var(--accent-green); }
+.direction-down { color: var(--accent-red); }
+.confidence-lbl { text-align: center; color: var(--text-muted); font-size: 14px; }
+.confidence-val { text-align: center; font-size: 28px; font-weight: bold; margin-bottom: 15px; }
+
+/* Progress Bar Container */
+.prob-bar-container {
+  display: flex;
+  height: 24px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: bold;
+  color: white;
+  text-align: center;
+  line-height: 24px;
+  margin-bottom: 15px;
+}
+.prob-down { background: var(--accent-red); transition: width 0.3s; }
+.prob-up { background: var(--accent-green); transition: width 0.3s; }
+.prob-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); }
+.legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+/* Technical Indicators Grid */
+.tech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.tech-card h4 {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table td { padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.data-table td:last-child { text-align: right; font-weight: 600; }
+.data-table tr:last-child td { border: none; }
+
+/* Tables at Bottom */
+.full-width-table-container { overflow-x: auto; }
+.full-width-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
+.full-width-table th { padding: 10px; border-bottom: 2px solid var(--border-color); color: var(--text-muted); font-weight: 600; }
+.full-width-table td { padding: 10px; border-bottom: 1px solid var(--border-color); }
+.full-width-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+.chart-wrapper { height: 320px; width: 100%; position: relative; }
+.up-text { color: var(--accent-green); }
+.down-text { color: var(--accent-red); }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h2>Stock Prediction Dashboard</h2>
+  <div class="subtitle">AI-powered technical analysis and market prediction</div>
+
+  <div class="card">
+    <div class="controls-grid">
+      <input id="ticker" placeholder="Enter Ticker (e.g., AAPL)">
+      <input id="email" placeholder="Email">
+      <button onclick="createReport()">Generate Report</button>
+      <div class="status" id="status">Status: Idle</div>
+    </div>
+  </div>
+
+  <div class="meta-grid" id="metaGrid" style="display:none;">
+    <div class="meta-item"><div class="meta-label">Ticker</div><div class="meta-val" id="metaTicker">-</div></div>
+    <div class="meta-item"><div class="meta-label">Generated At</div><div class="meta-val" id="metaGenerated">-</div></div>
+    <div class="meta-item"><div class="meta-label">Latest Data Date</div><div class="meta-val" id="metaLatestDate">-</div></div>
+    <div class="meta-item"><div class="meta-label">Report Status</div><div class="meta-val" id="metaReportStatus">-</div></div>
+  </div>
+
+  <div class="main-split" id="dashboardMain" style="display:none;">
+    <div class="card" style="display:flex; flex-direction:column; justify-content:center;">
+      <h3>Prediction</h3>
+      <div id="predDirection" class="pred-direction"></div>
+      <div class="confidence-lbl">Confidence</div>
+      <div id="predConfidence" class="confidence-val">-</div>
+      
+      <div class="prob-bar-container">
+        <div id="probDownBar" class="prob-down"></div>
+        <div id="probUpBar" class="prob-up"></div>
+      </div>
+      <div class="prob-legend">
+        <span><span class="legend-dot" style="background:var(--accent-red)"></span>Probability Down</span>
+        <span><span class="legend-dot" style="background:var(--accent-green)"></span>Probability Up</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Closing Price & Moving Averages</h3>
+      <div class="chart-wrapper">
+        <canvas id="mainChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="tech-grid" id="indicatorsGrid" style="display:none;">
+    <div class="card tech-card"><h4>📈 Price & Trend</h4><table class="data-table" id="table-trend"></table></div>
+    <div class="card tech-card"><h4>⚡ Momentum</h4><table class="data-table" id="table-momentum"></table></div>
+    <div class="card tech-card"><h4>📊 MACD</h4><table class="data-table" id="table-macd"></table></div>
+    <div class="card tech-card"><h4>🌐 Bollinger Bands</h4><table class="data-table" id="table-bb"></table></div>
+    <div class="card tech-card"><h4>🔋 Volume</h4><table class="data-table" id="table-volume"></table></div>
+    <div class="card tech-card"><h4>🔄 Returns</h4><table class="data-table" id="table-returns"></table></div>
+  </div>
+
+  <div class="card" id="featuresCard" style="display:none;">
+    <h3>Feature Values (Latest Day)</h3>
+    <div class="full-width-table-container">
+      <table class="full-width-table">
+        <thead><tr id="featuresTh"></tr></thead>
+        <tbody><tr id="featuresTd"></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="historyCard" style="display:none;">
+    <h3>Recent History</h3>
+    <div class="full-width-table-container">
+      <table class="full-width-table" id="historyTable">
+        <thead>
+          <tr>
+            <th>Date</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>RSI (14)</th><th>MACD</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE_URL="https://event-driven-task-queue-production.up.railway.app";
+let poller=null;
+let mainChartInstance=null;
+
+function formatValue(v) {
+  if (typeof v === 'number') {
+    if (v > 100000) return v.toLocaleString(undefined, {maximumFractionDigits:0});
+    return v.toFixed(v % 1 === 0 ? 0 : 4);
+  }
+  return v ?? "N/A";
+}
+
+function renderTableRows(targetId, obj) {
+  const table = document.getElementById(targetId);
+  table.innerHTML = "";
+  if (!obj) return;
+  for (const [k, v] of Object.entries(obj)) {
+    let styleClass = "";
+    if (typeof v === 'number' && v < 0 && (k.includes('Return') || k.includes('Histogram') || k.includes('Slope') || k.includes('MACD'))) {
+      styleClass = 'class="down-text"';
+    } else if (typeof v === 'number' && v > 0 && (k.includes('Return') || k.includes('Slope'))) {
+      styleClass = 'class="up-text"';
+    }
+    table.innerHTML += `<tr><td>${k}</td><td ${styleClass}>${formatValue(v)}</td></tr>`;
+  }
+}
+
+async function createReport(){
+ clearInterval(poller);
+ document.getElementById("status").textContent="Status: Submitting...";
+ const ticker=document.getElementById("ticker").value.trim().toUpperCase();
+ const email=document.getElementById("email").value.trim();
+
+ const res=await fetch(`${BASE_URL}/reports`,{
+  method:"POST",
+  headers:{"Content-Type":"application/json"},
+  body:JSON.stringify({ticker,email})
+ });
+ const data=await res.json();
+
+ if(data.cached && data.data){
+     render(data.data, "Completed (Cached)");
+     document.getElementById("status").textContent="Status: Completed (cached)";
+     return;
+ }
+
+ if(data.stream_id){
+     document.getElementById("status").textContent="Status: Queued";
+     poller=setInterval(()=>pollStatus(data.stream_id),2000);
+ }
+}
+
+async function pollStatus(id){
+ const res=await fetch(`${BASE_URL}/reports/${id}`);
+ const s=await res.json();
+ document.getElementById("status").textContent="Status: " + s.status;
+
+ if(s.status==="completed"){
+     clearInterval(poller);
+     const url=BASE_URL+s.data_url;
+     const r=await fetch(url);
+     const d=await r.json();
+     render(d, "Completed");
+ }
+ if(s.status==="failed"||s.status==="not_found") clearInterval(poller);
+}
+
+function render(d, statusString){
+ // Display Dashboard Blocks
+ document.getElementById("metaGrid").style.display = "grid";
+ document.getElementById("dashboardMain").style.display = "grid";
+ document.getElementById("indicatorsGrid").style.display = "grid";
+ document.getElementById("featuresCard").style.display = "block";
+ document.getElementById("historyCard").style.display = "block";
+
+ // Populate Meta Info Header
+ document.getElementById("metaTicker").textContent = d.ticker || "-";
+ document.getElementById("metaGenerated").textContent = d.generated_at ? new Date(d.generated_at).toLocaleString() : "-";
+ document.getElementById("metaLatestDate").textContent = d.latest_date ? d.latest_date.split('T')[0] : "-";
+ document.getElementById("metaReportStatus").textContent = statusString;
+
+ // Process Prediction Panel
+ const pred = d.prediction || {};
+ const isDown = pred.direction === "down";
+ const directionEl = document.getElementById("predDirection");
+ directionEl.className = `pred-direction ${isDown ? 'direction-down' : 'direction-up'}`;
+ directionEl.innerHTML = isDown ? `↓ DOWN` : `↑ UP`;
+ 
+ const confidencePct = ((pred.confidence || 0) * 100).toFixed(2) + "%";
+ document.getElementById("predConfidence").textContent = confidencePct;
+ 
+ const pDownBar = document.getElementById("probDownBar");
+ const pUpBar = document.getElementById("probUpBar");
+ if(isDown) {
+    pDownBar.style.width = confidencePct; pDownBar.textContent = confidencePct;
+    const inv = (100 - parseFloat(confidencePct)).toFixed(2) + "%";
+    pUpBar.style.width = inv; pUpBar.textContent = inv;
+ } else {
+    pUpBar.style.width = confidencePct; pUpBar.textContent = confidencePct;
+    const inv = (100 - parseFloat(confidencePct)).toFixed(2) + "%";
+    pDownBar.style.width = inv; pDownBar.textContent = inv;
+ }
+
+ // Render Technical Indicators Data Blocks
+ const ind = d.indicators || {};
+ renderTableRows("table-trend", ind["Price & Trend"]);
+ renderTableRows("table-momentum", ind["Momentum"]);
+ renderTableRows("table-macd", ind["MACD"]);
+ renderTableRows("table-bb", ind["Bollinger Bands"]);
+ renderTableRows("table-volume", ind["Volume"]);
+ renderTableRows("table-returns", ind["Returns"]);
+
+ // Flat Feature Values Horizontal Row View
+ const flat = d.indicators_flat || {};
+ const fTh = document.getElementById("featuresTh");
+ const fTd = document.getElementById("featuresTd");
+ fTh.innerHTML = ""; fTd.innerHTML = "";
+ Object.entries(flat).slice(0, 10).forEach(([k, v]) => { // Displaying first 10 for space layout stability
+   fTh.innerHTML += `<th>${k}</th>`;
+   fTd.innerHTML += `<td>${formatValue(v)}</td>`;
+ });
+
+ // Historical Data Processing
+ if(d.history && Array.isArray(d.history)){
+   const sortedHistory = [...d.history].sort((a,b) => new Date(a.date) - new Date(b.date));
+   
+   // Populate History Data Table (Latest 5 Days)
+   const historyBody = document.querySelector("#historyTable tbody");
+   historyBody.innerHTML = "";
+   const reverseHistory = [...sortedHistory].reverse().slice(0, 5);
+   reverseHistory.forEach(row => {
+     historyBody.innerHTML += `
+       <tr>
+         <td>${row.date ? row.date.split('T')[0] : "-"}</td>
+         <td>${formatValue(row.Open)}</td>
+         <td>${formatValue(row.High)}</td>
+         <td>${formatValue(row.Low)}</td>
+         <td style="font-weight:bold">${formatValue(row.Close)}</td>
+         <td>${formatValue(row.Volume)}</td>
+         <td>${formatValue(row.RSI_14)}</td>
+         <td class="${row.MACD < 0 ? 'down-text' : ''}">${formatValue(row.MACD)}</td>
+       </tr>`;
+   });
+
+   // Handle History Chart Rendering Instance
+   const labels = sortedHistory.map(item => item.date ? item.date.split('T')[0] : '');
+   const closePrices = sortedHistory.map(item => item.Close);
+   const sma50 = sortedHistory.map(item => item["50DSMA"]);
+   const sma200 = sortedHistory.map(item => item["200DSMA"]);
+
+   if(mainChartInstance) mainChartInstance.destroy();
+
+   const ctx = document.getElementById('mainChart').getContext('2d');
+   mainChartInstance = new Chart(ctx, {
+     type: 'line',
+     data: {
+       labels: labels,
+       datasets: [
+         { label: 'Close Price', data: closePrices, borderColor: '#2563eb', borderWidth: 2, pointRadius: 0, fill: false },
+         { label: '50-Day SMA', data: sma50, borderColor: '#f59e0b', borderWidth: 1.5, pointRadius: 0, fill: false },
+         { label: '200-Day SMA', data: sma200, borderColor: '#10b981', borderWidth: 1.5, pointRadius: 0, fill: false }
+       ]
+     },
+     options: {
+       responsive: true,
+       maintainAspectRatio: false,
+       plugins: { legend: { labels: { color: '#9ca3af' } } },
+       scales: {
+         x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', maxTicksLimit: 10 } },
+         y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#9ca3af', callback: (val) => '$' + val } }
+       }
+     }
+   });
+ }
+}
+</script>
+</body>
+</html>
